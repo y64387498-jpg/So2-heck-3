@@ -1,19 +1,38 @@
-name: Android APK Builder
+name: Build Android APK
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  # Android projesi repo kökünde değilse buraya klasör adını yaz (örn: MyGame)
+  PROJECT_DIR: .
 
 jobs:
   build:
-    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Download Source
         uses: actions/checkout@v4
+
+      - name: Repo yapısını göster (hata ayıklama)
+        run: |
+          echo "=== Kök klasör ==="
+          ls -la
+          echo "=== Gradle dosyaları ==="
+          find . -maxdepth 3 \( -name "settings.gradle*" -o -name "build.gradle*" -o -name "gradlew" \) -not -path "./.git/*"
+
+      - name: Gradle projesi var mı kontrol et
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ ! -f settings.gradle ] && [ ! -f settings.gradle.kts ] && [ ! -f build.gradle ] && [ ! -f build.gradle.kts ]; then
+            echo "::error::'${PROJECT_DIR}' klasöründe Gradle projesi yok. PROJECT_DIR değerini düzelt veya Android projesini ekle."
+            exit 1
+          fi
 
       - name: Install Java
         uses: actions/setup-java@v4
@@ -24,11 +43,40 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Android SDK lisanslarını kabul et
+        run: yes | sdkmanager --licenses > /dev/null || true
+
+      - name: gradlew'e çalıştırma izni ver
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+          else
+            echo "gradlew yok, sistem Gradle'ı kullanılacak"
+          fi
+
+      - name: Mevcut task'ları listele (hata ayıklama)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ -f gradlew ]; then
+            ./gradlew tasks --all | head -n 80
+          else
+            gradle tasks --all | head -n 80
+          fi
+
       - name: Build Debug APK
-        run: gradle assembleDebug
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ -f gradlew ]; then
+            ./gradlew assembleDebug --stacktrace
+          else
+            gradle assembleDebug --stacktrace
+          fi
 
       - name: Save APK
         uses: actions/upload-artifact@v4
         with:
-          name: ESP-Demo
-          path: app/build/outputs/apk/debug/*.apk
+          name: app-debug-apk
+          path: ${{ env.PROJECT_DIR }}/**/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          
